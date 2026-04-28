@@ -26,7 +26,14 @@ export function ProductList({ products, loading }: ProductListProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-8">
       {products.map((product) => (
-        <div key={product._id} className="rounded-2xl neomorph-raised p-5 bg-[#e8eaf0] transition hover:-translate-y-1 flex flex-col">
+        <div key={product._id} className="rounded-2xl neomorph-raised p-5 bg-[#e8eaf0] transition hover:-translate-y-1 flex flex-col relative">
+          
+          {/* ✅ SPONSORED BADGE */}
+          {(product as any).isCurrentlyPromoted && (
+            <div className="absolute top-3 right-3 bg-orange-500 text-white text-xs font-bold px-3 py-1 rounded-full">
+              Sponsored
+            </div>
+          )}
           
           {/* --- ADDED IMAGE CONTAINER --- */}
           <div className="w-full h-48 mb-4 rounded-xl overflow-hidden neomorph-inset bg-[#d9dbe0]">

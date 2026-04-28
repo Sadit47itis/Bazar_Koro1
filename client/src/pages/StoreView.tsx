@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Plus, Image as ImageIcon } from "lucide-react";
+import { ArrowLeft, Plus, Image as ImageIcon, Store, Star } from "lucide-react";
 
 interface Product {
   id: string;
@@ -24,6 +24,8 @@ export default function StoreView() {
 
   const [store, setStore] = useState<any>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [avgRating, setAvgRating] = useState<number>(0);
   const [showAddProduct, setShowAddProduct] = useState(false);
 
   // Form State
@@ -35,22 +37,28 @@ export default function StoreView() {
   const [pLng, setPLng] = useState("");
   const [pImageBase64, setPImageBase64] = useState("");
   const [pLoading, setPLoading] = useState(false);
+  const [promoteProductId, setPromoteProductId] = useState<string | null>(null);
+  const [adBudget, setAdBudget] = useState<string>('500');
+  const [durationDays, setDurationDays] = useState<string>('30');
+  const [promotingId, setPromotingId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [productImageFile, setProductImageFile] = useState<File | null>(null);
+
   useEffect(() => {
-    fetchStoreAndProducts();
+    fetchStoreAndProducts(false);
     
     // ✅ Auto-refresh products every 5 seconds to show real-time stock updates
     const interval = setInterval(() => {
-      fetchStoreAndProducts();
+      fetchStoreAndProducts(true);
     }, 5000);
 
     return () => clearInterval(interval);
   }, [storeId]);
 
-  const fetchStoreAndProducts = async () => {
-    setLoading(true);
+  const fetchStoreAndProducts = async (isPolling = false) => {
+    if (!isPolling) setLoading(true);
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`/api/stores/${storeId}`, {
@@ -62,10 +70,12 @@ export default function StoreView() {
       const data = await res.json();
       setStore(data.store);
       setProducts(data.products);
+      setReviews(data.reviews || []);
+      setAvgRating(data.avgRating || 0);
     } catch (err: any) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (!isPolling) setLoading(false);
     }
   };
 
@@ -77,6 +87,8 @@ export default function StoreView() {
        alert("File size exceeds 2MB limit!");
        return;
     }
+
+    setProductImageFile(file);
 
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -93,29 +105,34 @@ export default function StoreView() {
       const token = localStorage.getItem("token");
       const price = Number(pPrice);
       if (Number.isNaN(price)) throw new Error('Enter a valid product price');
-      if (!pImageBase64) throw new Error('Product image is required');
+      if (!productImageFile && !pImageBase64) throw new Error('Product image is required');
       if ((pLat && !pLng) || (!pLat && pLng)) throw new Error('Please enter both latitude and longitude or leave both blank');
 
-      const location = pLat && pLng ? {
-        type: 'Point',
-        coordinates: [Number(pLng), Number(pLat)] as [number, number]
-      } : undefined;
+      const formData = new FormData();
+      formData.append("name", pName.trim());
+      formData.append("description", pDesc.trim());
+      formData.append("price", String(price));
+      formData.append("category", pCategory.trim() || 'general');
+      
+      if (productImageFile) {
+         formData.append("image", productImageFile);
+      } else if (pImageBase64) {
+         formData.append("imageUrl", pImageBase64);
+      }
+
+      if (pLat && pLng) {
+         formData.append("location[type]", "Point");
+         formData.append("location[coordinates][0]", String(pLng));
+         formData.append("location[coordinates][1]", String(pLat));
+      }
 
       const res = await fetch(`/api/stores/${storeId}/products`, {
          method: "POST",
          headers: {
-            "Content-Type": "application/json",
             "Authorization": `Bearer ${token}`,
             "x-active-role": "seller"
          },
-         body: JSON.stringify({
-            name: pName.trim(),
-            description: pDesc.trim(),
-            price,
-            category: pCategory.trim() || 'general',
-            imageUrl: pImageBase64,
-            ...(location ? { location } : {})
-         })
+         body: formData
       });
 
       if (!res.ok) {
@@ -134,12 +151,62 @@ export default function StoreView() {
       setPLat("");
       setPLng("");
       setPImageBase64("");
+      setProductImageFile(null);
       setShowAddProduct(false);
 
     } catch (err: any) {
        alert(err.message);
     } finally {
       setPLoading(false);
+    }
+  };
+
+  // ✅ HANDLE PRODUCT PROMOTION
+  const handlePromoteProduct = async (productId: string) => {
+    try {
+      const budget = Number(adBudget);
+      const days = Number(durationDays);
+
+      if (Number.isNaN(budget) || budget <= 0) {
+        alert('Please enter a valid ad budget');
+        return;
+      }
+      if (Number.isNaN(days) || days <= 0) {
+        alert('Please enter valid duration');
+        return;
+      }
+
+      setPromotingId(productId);
+      const token = localStorage.getItem('token');
+      
+      const res = await fetch(`/api/products/${productId}/promote`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'x-active-role': 'seller',
+        },
+        body: JSON.stringify({
+          adBudget: budget,
+          durationDays: days,
+        }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null);
+        throw new Error(errBody?.error || 'Failed to promote product');
+      }
+
+      await res.json();
+      alert(`Product promoted for ${days} days with budget ৳${budget}!`);
+      setPromoteProductId(null);
+      
+      // Refresh products list
+      await fetchStoreAndProducts(false);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setPromotingId(null);
     }
   };
 
@@ -157,8 +224,19 @@ export default function StoreView() {
                 <ArrowLeft className="w-5 h-5" />
              </button>
              <div>
-                <h1 className="text-3xl font-extrabold tracking-tight">{store.name}</h1>
-                <p className="text-muted font-medium text-sm">Owner: {store.ownerName} • {store.location.city}</p>
+                <h1 className="text-3xl font-extrabold tracking-tight flex items-center gap-2">
+                   {store.name}
+                   {reviews.length > 0 && (
+                        <span className="flex items-center gap-1 text-orange-500 font-bold bg-orange-500/10 px-2 py-0.5 rounded-lg text-xs tracking-normal ml-2">
+                           <Star className="w-4 h-4 fill-current mb-0.5" />
+                         {avgRating.toFixed(1)} ({reviews.length} reviews)
+                      </span>
+                   )}
+                </h1>
+                <p className="text-muted font-medium text-sm flex items-center gap-1 mt-1">
+                   <Store className="w-4 h-4 text-slate-400" />
+                   Owner: {store.ownerName} • {store.location.city}
+                </p>
                 {store.description && <p className="text-sm mt-1 text-main">{store.description}</p>}
                 {store.operatingHours && <p className="text-xs mt-1 text-primary font-semibold uppercase tracking-wide">Hours: {store.operatingHours}</p>}
              </div>
@@ -257,6 +335,75 @@ export default function StoreView() {
            </div>
         )}
 
+        {/* Promotion Modal */}
+        {promoteProductId && (
+           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+              <div className="bg-surface neomorph-raised rounded-[2rem] w-full max-w-md p-8 relative">
+                 <button onClick={() => setPromoteProductId(null)} className="absolute top-6 right-6 text-slate-500 hover:text-red-500 font-bold px-3 py-1 rounded-full neomorph-raised">✕</button>
+                 <h2 className="text-2xl font-bold mb-6 text-center">🚀 Promote Your Product</h2>
+                 
+                 <div className="space-y-4 text-left">
+                    <p className="text-sm text-muted mb-6">Set your advertising budget and duration. Your product will appear at the top of search results and get priority visibility.</p>
+
+                    <div>
+                      <label className="block text-xs font-bold text-muted uppercase tracking-widest mb-1 pl-1">Ad Budget (Taka)</label>
+                      <div className="neomorph-inset rounded-xl p-1">
+                        <input 
+                          type="number" 
+                          min="100" 
+                          step="100"
+                          value={adBudget} 
+                          onChange={e => setAdBudget(e.target.value)} 
+                          className="w-full bg-transparent px-4 py-2 outline-none text-sm font-medium"
+                          placeholder="500"
+                        />
+                      </div>
+                      <p className="text-xs text-muted mt-1">Minimum: ৳100</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-muted uppercase tracking-widest mb-1 pl-1">Duration (Days)</label>
+                      <div className="neomorph-inset rounded-xl p-1">
+                        <input 
+                          type="number" 
+                          min="1" 
+                          max="365"
+                          value={durationDays} 
+                          onChange={e => setDurationDays(e.target.value)} 
+                          className="w-full bg-transparent px-4 py-2 outline-none text-sm font-medium"
+                          placeholder="30"
+                        />
+                      </div>
+                      <p className="text-xs text-muted mt-1">Max: 365 days</p>
+                    </div>
+
+                    <div className="bg-orange-100 border border-orange-300 rounded-xl p-4 mt-6">
+                      <p className="text-sm font-bold text-orange-900">Total Cost: ৳{(Number(adBudget) || 0).toFixed(0)}</p>
+                      <p className="text-xs text-orange-800 mt-1">This is an estimate. Actual charges apply daily.</p>
+                    </div>
+
+                    <div className="flex gap-3 mt-8">
+                       <button
+                         type="button"
+                         onClick={() => setPromoteProductId(null)}
+                         className="flex-1 py-3 font-semibold rounded-xl bg-slate-200 text-slate-700 active:scale-95 transition-transform"
+                       >
+                         Cancel
+                       </button>
+                       <button
+                         type="button"
+                         onClick={() => handlePromoteProduct(promoteProductId)}
+                         disabled={promotingId === promoteProductId}
+                         className="flex-1 py-3 font-semibold rounded-xl bg-orange-500 text-white active:scale-95 transition-transform disabled:opacity-50"
+                       >
+                         {promotingId === promoteProductId ? 'Promoting...' : 'Promote Now'}
+                       </button>
+                    </div>
+                 </div>
+              </div>
+           </div>
+        )}
+
         {/* Products Grid */}
         <h3 className="text-xl font-bold mb-4 tracking-tight">Products ({products.length})</h3>
         
@@ -278,9 +425,44 @@ export default function StoreView() {
                     <div className="mt-4 pt-3 border-t border-slate-200">
                        <div className="text-lg font-extrabold text-primary">TK {p.price.toFixed(2)}</div>
                        <div className="text-xs text-muted font-semibold mt-1">Stock: {p.stockQuantity ?? 0}</div>
+                       {(p as any).isPromoted && (
+                         <div className="text-xs font-bold text-orange-600 bg-orange-100 px-2 py-1 rounded mt-2">
+                           ✨ Promoted
+                         </div>
+                       )}
                     </div>
+                    <button 
+                       onClick={() => setPromoteProductId(p.id)}
+                       className="mt-3 w-full bg-orange-500 text-white py-2 rounded-xl text-sm font-bold neomorph-raised active:neomorph-inset transition-all"
+                    >
+                       Promote Product
+                    </button>
                  </div>
               ))}
+           </div>
+        )}
+
+        {/* Reviews Section */}
+        {reviews.length > 0 && (
+           <div className="mt-12 pt-8 border-t border-slate-300">
+              <h2 className="text-2xl font-bold mb-6 tracking-tight flex items-center gap-2">
+                 <Star className="text-primary w-6 h-6 fill-current" /> Store Reviews
+              </h2>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                 {reviews.map((r: any) => (
+                    <div key={r._id} className="p-5 rounded-2xl bg-surface neomorph-inset flex flex-col gap-3">
+                       <div className="flex items-start justify-between">
+                          <span className="font-extrabold text-main truncate mr-2">{r.buyerId?.name || "Verified Buyer"}</span>
+                          <div className="flex gap-0.5 flex-shrink-0">
+                             {Array.from({ length: 5 }).map((_, i) => (
+                                <Star key={i} className={`w-4 h-4 ${i < r.rating ? 'fill-orange-500 text-orange-500' : 'text-slate-300'}`} />
+                             ))}
+                          </div>
+                       </div>
+                       <p className="text-muted text-sm leading-relaxed italic blockquote">"{r.comment}"</p>
+                    </div>
+                 ))}
+              </div>
            </div>
         )}
 

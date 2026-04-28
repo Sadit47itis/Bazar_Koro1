@@ -1,38 +1,35 @@
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Product from './models/Product'; 
+import Product from './models/Product.js'; 
+import Coupon from './models/Coupon.js'; // Import the new model
 
 // Create a fake valid MongoDB ObjectId for the store
 const fakeStoreId = new mongoose.Types.ObjectId();
 
-const dummyProducts = [
-  { 
-    name: "Lenovo Legion Gaming Laptop", 
-    price: 1200, 
-    category: "electronics",
-    storeId: fakeStoreId,
-    location: { type: "Point", coordinates: [90.4125, 23.8103] } // Dhaka coords
+const dummyCoupons = [
+  {
+    code: "SAVE10",
+    discountType: "percentage",
+    discountValue: 10,
+    minPurchase: 500,
+    expiryDate: new Date("2026-12-31"),
+    isActive: true
   },
-  { 
-    name: "Adidas Running Shoes", 
-    price: 80, 
-    category: "clothing",
-    storeId: fakeStoreId,
-    location: { type: "Point", coordinates: [90.4125, 23.8103] }
+  {
+    code: "WELCOME50",
+    discountType: "fixed",
+    discountValue: 50,
+    minPurchase: 200,
+    expiryDate: new Date("2026-12-31"),
+    isActive: true
   },
-  { 
-    name: "Miniket Rice 10kg", 
-    price: 10, 
-    category: "groceries",
-    storeId: fakeStoreId,
-    location: { type: "Point", coordinates: [90.4125, 23.8103] }
-  },
-  { 
-    name: "Savlon Cream 100g", 
-    price: 1, 
-    category: "pharmacy",
-    storeId: fakeStoreId,
-    location: { type: "Point", coordinates: [90.4125, 23.8103] }
+  {
+    code: "EXPIRED20",
+    discountType: "percentage",
+    discountValue: 20,
+    minPurchase: 100,
+    expiryDate: new Date("2020-01-01"), // For testing the "expired" error
+    isActive: true
   }
 ];
 
@@ -44,13 +41,15 @@ async function seedDatabase() {
     await mongoose.connect(mongoUri);
     console.log('✅ Connected to MongoDB Atlas');
 
-    await Product.deleteMany({});
-    console.log('🧹 Cleared existing products');
 
-    await Product.insertMany(dummyProducts);
-    console.log(`🌱 Successfully injected ${dummyProducts.length} products!`);
+
+    // Seed Coupons
+    await Coupon.deleteMany({});
+    await Coupon.insertMany(dummyCoupons);
+    console.log(`🎟️ Successfully injected ${dummyCoupons.length} coupons!`);
 
     await mongoose.disconnect();
+    console.log('👋 Seeding complete. Connection closed.');
     process.exit(0);
   } catch (error) {
     console.error('❌ Error seeding database:', error);

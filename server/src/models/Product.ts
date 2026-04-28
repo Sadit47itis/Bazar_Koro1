@@ -15,6 +15,9 @@ export interface IProduct {
     type: 'Point'
     coordinates: [number, number]
   }
+  adBudget?: number         // Ad budget in Taka for promotion
+  isPromoted?: boolean      // Whether product is currently promoted
+  promotedUntil?: Date      // When the promotion expires
 }
 
 const productSchema = new mongoose.Schema<IProduct>(
@@ -39,6 +42,9 @@ const productSchema = new mongoose.Schema<IProduct>(
         required: false,
       },
     },
+    adBudget: { type: Number, default: 0, min: 0 },      // Promotion budget
+    isPromoted: { type: Boolean, default: false, index: true }, // Quick filter for promoted items
+    promotedUntil: { type: Date, default: null },         // Expiry of promotion
   },
   { timestamps: true }
 )

@@ -15,6 +15,7 @@ import Cancel from "./pages/cancel";
 import InventoryDashboard from "./pages/InventoryDashboard";
 import AdAnalytics from "./pages/AdAnalytics";
 import CreateAd from "./pages/CreateAd";
+import MarketerDashboard from "./pages/MarketersDashboard";
 
 function App() {
   return (
@@ -36,6 +37,7 @@ function App() {
         <Route path="/success" element={<Success />} />
         <Route path="/cancel" element={<Cancel />} />
         <Route path="/inventory/:storeId" element={<InventoryDashboard />} />
+        <Route path="/marketer/dashboard" element={<MarketerDashboard />} />
       </Routes>
     </BrowserRouter>
   );

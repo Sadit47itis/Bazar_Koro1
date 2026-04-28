@@ -4,16 +4,19 @@ import { z } from 'zod';
 import type { AuthedRequest } from '../middleware/auth.js';
 import { Store } from '../models/Store.js';
 import Product from '../models/Product.js';
+import Review from '../models/Review.js';
 
 const storeSchema = z.object({
   name: z.string().min(1),
   ownerName: z.string().min(1),
   description: z.string().optional(),
   operatingHours: z.string().optional(),
+  imageUrl: z.string().optional(),
   location: z.object({
     city: z.string().min(1),
     road: z.string().min(1),
-    address: z.string().min(1)
+    address: z.string().min(1),
+    coordinates: z.tuple([z.number(), z.number()]).optional() // [lng, lat]
   }),
   type: z.enum(['pharmacy', 'general_store'])
 });
@@ -29,7 +32,7 @@ const productSchema = z.object({
   imageUrl: z.string(), // expected to be base64 data url from frontend
   location: z.object({
     type: z.literal('Point'),
-    coordinates: z.tuple([z.number(), z.number()])
+    coordinates: z.tuple([z.coerce.number(), z.coerce.number()])
   }).optional()
 });
 
@@ -59,8 +62,19 @@ export async function createStoreRoute(req: AuthedRequest, res: Response) {
 export async function getAllStoresRoute(req: AuthedRequest, res: Response) {
   try {
     // Only return approved and active stores for general browse/buyers.
-    const stores = await Store.find({ status: { $in: ['approved', undefined] } as any, isActive: { $in: [true, undefined] } as any });
-    return res.json(stores);
+      // Using $nin / $ne ensures older records missing these fields are still shown.
+      const stores = await Store.find({ status: { $nin: ['pending', 'rejected'] }, isActive: { $ne: false } }).lean();
+      
+      const storeIds = stores.map((s: any) => s._id);
+      const reviews = await Review.find({ storeId: { $in: storeIds } }).lean();
+      
+      const storesWithRating = stores.map((s: any) => {
+        const storeReviews = reviews.filter((r: any) => r.storeId.toString() === s._id.toString());
+        const avgRating = storeReviews.length ? storeReviews.reduce((acc: number, r: any) => acc + r.rating, 0) / storeReviews.length : 0;
+        return { ...s, id: s._id, avgRating, reviewCount: storeReviews.length };
+      });
+
+    return res.json(storesWithRating);
   } catch (error: any) {
     return res.status(500).json({ error: 'Server error', details: error.message });
   }
@@ -93,8 +107,16 @@ export async function getStoreWithProductsRoute(req: AuthedRequest, res: Respons
        return res.status(403).json({ error: 'Not your store' });
     }
 
-    const products = await Product.find({ storeId: store._id });
-    return res.json({ store, products });
+    const [products, reviews] = await Promise.all([
+      Product.find({ storeId: store._id }),
+      Review.find({ storeId: store._id }).populate('buyerId', 'name').sort({ createdAt: -1 })
+    ]);
+
+    const avgRating = reviews.length > 0
+      ? reviews.reduce((acc, r: any) => acc + r.rating, 0) / reviews.length
+      : 0;
+
+    return res.json({ store, products, reviews, avgRating });
   } catch (error: any) {
     return res.status(500).json({ error: 'Server error', details: error.message });
   }
@@ -124,7 +146,29 @@ export async function addProductToStoreRoute(req: AuthedRequest, res: Response) 
     return res.status(403).json({ error: 'Only sellers can add products' });
   }
 
-  const parsed = productSchema.safeParse(req.body);
+  // Support both multipart/form-data (where body is parsed but image is in req.file) and application/json
+  let fileUrl = req.body.imageUrl;
+  if ((req as any).file && (req as any).file.path) {
+    fileUrl = (req as any).file.path;
+  }
+
+  const payload = { ...req.body, imageUrl: fileUrl };
+
+  // Parse location if it comes from FormData strings like location[type]
+  if (payload['location[type]'] && payload['location[coordinates][0]']) {
+    payload.location = {
+      type: payload['location[type]'],
+      coordinates: [
+        Number(payload['location[coordinates][0]']),
+        Number(payload['location[coordinates][1]'])
+      ]
+    };
+    delete payload['location[type]'];
+    delete payload['location[coordinates][0]'];
+    delete payload['location[coordinates][1]'];
+  }
+
+  const parsed = productSchema.safeParse(payload);
   if (!parsed.success) return res.status(400).json({ error: 'Invalid product data', details: parsed.error.flatten() });
 
   try {

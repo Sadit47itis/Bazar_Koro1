@@ -11,4 +11,7 @@ coverage/
 report_text.txt
 *.pdf
 LEARNING.md
-.gitignore
+node_modules
+DEPLOY.md
+stuff.txt
+log.txt

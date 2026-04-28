@@ -7,6 +7,10 @@ export interface IStore {
     city: string;
     road: string;
     address: string;
+    coordinates?: {
+      type: 'Point';
+      coordinates: [number, number]; // [lng, lat]
+    };
   };
   description?: string;
   operatingHours?: string;
@@ -15,6 +19,7 @@ export interface IStore {
   status: 'pending' | 'approved' | 'rejected';
   isActive: boolean;
   documents: string[];
+  imageUrl?: string;
 }
 
 const storeSchema = new mongoose.Schema<IStore>(
@@ -24,10 +29,15 @@ const storeSchema = new mongoose.Schema<IStore>(
     location: {
       city: { type: String, required: true },
       road: { type: String, required: true },
-      address: { type: String, required: true }
+      address: { type: String, required: true },
+      coordinates: {
+        type: { type: String, enum: ['Point'], default: 'Point' },
+        coordinates: { type: [Number], default: [0, 0] } // [lng, lat]
+      }
     },
     description: { type: String },
     operatingHours: { type: String },
+    imageUrl: { type: String },
     type: { type: String, enum: ['pharmacy', 'general_store'], required: true },
     sellerId: { type: String, required: true },
     status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
@@ -36,6 +46,9 @@ const storeSchema = new mongoose.Schema<IStore>(
   },
   { timestamps: true }
 );
+
+// Create geospatial index for nearby stores
+storeSchema.index({ 'location.coordinates': '2dsphere' });
 
 storeSchema.set('toJSON', {
   virtuals: true,

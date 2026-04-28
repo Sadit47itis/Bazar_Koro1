@@ -5,6 +5,7 @@ import { User } from './models/User.js'
 export interface UserRecord extends UserPublic {
   passwordHash: string
   isOnline?: boolean
+  adPoints?: number
 }
 
 const ordersById = new Map<string, Order>()
@@ -30,6 +31,7 @@ export async function createUser(input: {
     roles: saved.roles as UserRole[],
     passwordHash: saved.passwordHash,
     isOnline: saved.isOnline,
+    adPoints: saved.adPoints,
   }
 }
 
@@ -43,6 +45,7 @@ export async function getUserByEmail(email: string): Promise<UserRecord | undefi
     roles: user.roles as UserRole[],
     passwordHash: user.passwordHash,
     isOnline: user.isOnline,
+    adPoints: user.adPoints,
   }
 }
 
@@ -56,6 +59,7 @@ export async function getUserById(id: string): Promise<UserRecord | undefined> {
     roles: user.roles as UserRole[],
     passwordHash: user.passwordHash,
     isOnline: user.isOnline,
+    adPoints: user.adPoints,
   }
 }
 

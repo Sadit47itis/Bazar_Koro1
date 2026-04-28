@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Minus, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Minus, Plus, Trash2, Ticket, X } from "lucide-react";
 
+// --- Interfaces ---
 interface CartItem {
   productId: string;
-  storeId: string;
-  storeName?: string;
   name: string;
   unitPrice: number;
   qty: number;
@@ -14,7 +13,7 @@ interface CartItem {
 
 interface CartGroup {
   storeId: string;
-  storeName?: string;
+  storeName: string;
   items: CartItem[];
   subtotal: number;
 }
@@ -31,10 +30,16 @@ interface CartSummary {
 export default function Cart() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<CartSummary | null>(null);
   const [busyProductId, setBusyProductId] = useState<string | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+
+  // --- NEW COUPON STATES ---
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discount: number } | null>(null);
+  const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
+  const [couponError, setCouponError] = useState<string | null>(null);
 
   const token = useMemo(() => localStorage.getItem("token"), []);
 
@@ -44,8 +49,7 @@ export default function Cart() {
       return;
     }
     void fetchSummary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [token, navigate]);
 
   const fetchSummary = async () => {
     setLoading(true);
@@ -73,6 +77,52 @@ export default function Cart() {
     }
   };
 
+  // --- COUPON VALIDATION LOGIC ---
+  const applyCoupon = async () => {
+    if (!couponCode.trim() || !summary) return;
+    setIsValidatingCoupon(true);
+    setCouponError(null);
+
+    try {
+      const res = await fetch("/api/coupons/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ 
+          code: couponCode.toUpperCase(), 
+          subtotal: summary.subtotal 
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Invalid coupon");
+
+      setAppliedCoupon({
+        code: couponCode.toUpperCase(),
+        discount: data.discountAmount,
+      });
+      setCouponCode("");
+    } catch (err: any) {
+      setCouponError(err.message);
+    } finally {
+      setIsValidatingCoupon(false);
+    }
+  };
+
+  const removeCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponError(null);
+  };
+
+  // Calculate final totals based on applied coupon
+  const finalTotal = useMemo(() => {
+    const baseTotal = summary?.total ?? 0;
+    const discount = appliedCoupon?.discount ?? 0;
+    return Math.max(0, baseTotal - discount);
+  }, [summary, appliedCoupon]);
+
   const updateQty = async (productId: string, nextQty: number) => {
     if (!token) return;
     setBusyProductId(productId);
@@ -88,6 +138,8 @@ export default function Cart() {
       });
       if (!res.ok) throw new Error("Failed to update quantity");
       setSummary((await res.json()) as CartSummary);
+      // Remove coupon if cart changes (forces re-validation)
+      setAppliedCoupon(null);
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -110,6 +162,7 @@ export default function Cart() {
       });
       if (!res.ok) throw new Error("Failed to remove item");
       setSummary((await res.json()) as CartSummary);
+      setAppliedCoupon(null);
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -118,7 +171,12 @@ export default function Cart() {
   };
 
   const handleCheckout = async () => {
-    if (!summary || summary.items.length === 0) return;
+    // 1. Validation check
+    if (!summary || summary.items.length === 0) {
+      alert("Your cart is empty.");
+      return;
+    }
+    
     setIsCheckingOut(true);
 
     try {
@@ -126,28 +184,40 @@ export default function Cart() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          "Authorization": `Bearer ${token}`,
           "x-active-role": "buyer",
         },
         body: JSON.stringify({
+          // Mapping the items to include the IDs the backend needs
           items: summary.items.map((item) => ({
+            productId: item.productId, // Essential for DB verification
             name: item.name,
             price: item.unitPrice,
             quantity: item.qty,
           })),
+          couponCode: appliedCoupon?.code || null,
         }),
       });
 
       const data = await res.json();
 
+      // 2. Enhanced Error Handling
+      if (!res.ok) {
+        // Log the full response to the console for debugging
+        console.error("Backend Error Response:", data);
+        throw new Error(data.error || data.message || `Server Error (${res.status})`);
+      }
+
+      // 3. Redirect to Stripe
       if (data.url) {
         window.location.href = data.url;
       } else {
-        throw new Error(data.error || "Failed to get checkout URL");
+        throw new Error("The server didn't return a checkout URL.");
       }
     } catch (err: any) {
-      console.error("Checkout Error:", err);
-      alert(err.message || "Something went wrong during checkout.");
+      console.error("Checkout process failed:", err);
+      // Alerts the specific error message from the backend
+      alert(`Checkout Failed: ${err.message}`);
     } finally {
       setIsCheckingOut(false);
     }
@@ -155,34 +225,16 @@ export default function Cart() {
 
   if (loading) return <div className="min-h-screen bg-surface flex items-center justify-center">Loading...</div>;
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-surface flex items-center justify-center p-6">
-        <div className="neomorph-inset rounded-2xl p-6 text-center text-red-500 max-w-sm w-full">
-          {error}
-          <button
-            onClick={() => navigate("/dashboard")}
-            className="mt-4 w-full bg-primary text-white py-2 rounded-xl neomorph-raised active:neomorph-inset transition-all font-semibold"
-          >
-            Back to Dashboard
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   const groups = summary?.grouped ?? [];
   const isEmpty = (summary?.items?.length ?? 0) === 0;
 
   return (
     <div className="min-h-screen bg-surface text-main font-['Plus_Jakarta_Sans'] p-6">
       <div className="max-w-6xl mx-auto">
+        {/* Header */}
         <div className="flex items-center justify-between gap-4 mb-8 pb-6 border-b border-slate-300">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => navigate("/dashboard")}
-              className="p-3 bg-surface neomorph-raised hover:neomorph-inset active:neomorph-inset transition-all rounded-full text-primary"
-            >
+            <button onClick={() => navigate("/dashboard")} className="p-3 bg-surface neomorph-raised hover:neomorph-inset active:neomorph-inset transition-all rounded-full text-primary">
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div>
@@ -196,10 +248,11 @@ export default function Cart() {
           <div className="neomorph-inset rounded-3xl p-12 text-center text-muted font-medium">Your cart is empty.</div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Cart Items List */}
             <div className="lg:col-span-2 space-y-6">
               {groups.map((g) => (
                 <div key={g.storeId} className="neomorph-raised rounded-3xl p-6">
-                  <div className="flex items-start justify-between gap-4 mb-4 pb-4 border-b border-slate-200">
+                   <div className="flex items-start justify-between gap-4 mb-4 pb-4 border-b border-slate-200">
                     <div>
                       <h2 className="text-xl font-extrabold tracking-tight">{g.storeName ?? "Store"}</h2>
                       <p className="text-xs font-semibold text-slate-500">{g.items.length} item(s)</p>
@@ -233,7 +286,6 @@ export default function Cart() {
                                 onClick={() => removeItem(item.productId)}
                                 disabled={isBusy}
                                 className="p-2 rounded-xl neomorph-raised active:neomorph-inset transition-all text-red-500 disabled:opacity-60"
-                                title="Remove"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -244,8 +296,7 @@ export default function Cart() {
                                 <button
                                   onClick={() => updateQty(item.productId, Math.max(0, item.qty - 1))}
                                   disabled={isBusy}
-                                  className="p-2 rounded-xl neomorph-raised active:neomorph-inset transition-all disabled:opacity-60"
-                                  title="Decrease"
+                                  className="p-2 rounded-xl neomorph-raised active:neomorph-inset transition-all"
                                 >
                                   <Minus className="w-4 h-4" />
                                 </button>
@@ -253,13 +304,11 @@ export default function Cart() {
                                 <button
                                   onClick={() => updateQty(item.productId, item.qty + 1)}
                                   disabled={isBusy}
-                                  className="p-2 rounded-xl neomorph-raised active:neomorph-inset transition-all disabled:opacity-60"
-                                  title="Increase"
+                                  className="p-2 rounded-xl neomorph-raised active:neomorph-inset transition-all"
                                 >
                                   <Plus className="w-4 h-4" />
                                 </button>
                               </div>
-
                               <div className="text-right">
                                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Line Total</p>
                                 <p className="text-base font-extrabold">TK {(item.unitPrice * item.qty).toFixed(2)}</p>
@@ -274,34 +323,79 @@ export default function Cart() {
               ))}
             </div>
 
-            <div className="neomorph-raised rounded-3xl p-6 h-fit">
-              <h2 className="text-xl font-extrabold tracking-tight mb-4">Summary</h2>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-sm font-semibold">
-                  <span className="text-muted">Subtotal</span>
-                  <span>TK {(summary?.subtotal ?? 0).toFixed(2)}</span>
+            {/* Summary Sidebar */}
+            <div className="space-y-6">
+              <div className="neomorph-raised rounded-3xl p-6 h-fit">
+                <h2 className="text-xl font-extrabold tracking-tight mb-6">Order Summary</h2>
+                
+                {/* --- COUPON SECTION --- */}
+                <div className="mb-6">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Have a Promo Code?</p>
+                  {!appliedCoupon ? (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="e.g. LOCAL10"
+                          value={couponCode}
+                          onChange={(e) => setCouponCode(e.target.value)}
+                          className="flex-1 bg-surface neomorph-inset rounded-xl px-4 py-2 text-sm font-bold uppercase placeholder:lowercase outline-none"
+                        />
+                        <button
+                          onClick={applyCoupon}
+                          disabled={isValidatingCoupon || !couponCode}
+                          className="p-3 bg-primary text-white rounded-xl neomorph-raised active:neomorph-inset transition-all disabled:opacity-50"
+                        >
+                          <Ticket className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {couponError && <p className="text-[10px] font-bold text-red-500 px-1">{couponError}</p>}
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl p-3">
+                      <div className="flex items-center gap-2">
+                        <Ticket className="w-4 h-4 text-green-600" />
+                        <span className="text-sm font-black text-green-700">{appliedCoupon.code}</span>
+                      </div>
+                      <button onClick={removeCoupon} className="text-green-700 hover:scale-110 transition-transform">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center justify-between text-sm font-semibold">
-                  <span className="text-muted">Delivery</span>
-                  <span>TK {(summary?.deliveryCharge ?? 0).toFixed(2)}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm font-semibold">
-                  <span className="text-muted">Platform Fee</span>
-                  <span>TK {(summary?.platformFee ?? 0).toFixed(2)}</span>
-                </div>
-                <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-                  <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Total</span>
-                  <span className="text-2xl font-extrabold text-primary">TK {(summary?.total ?? 0).toFixed(2)}</span>
-                </div>
-              </div>
 
-              <button
-                onClick={handleCheckout}
-                disabled={isCheckingOut || isEmpty}
-                className="mt-8 w-full bg-primary text-white py-4 rounded-xl neomorph-raised hover:neomorph-inset active:neomorph-inset transition-all font-extrabold text-lg flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {isCheckingOut ? "Connecting to Stripe..." : "Proceed to Checkout"}
-              </button>
+                {/* Price Breakdown */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-sm font-semibold">
+                    <span className="text-muted">Subtotal</span>
+                    <span>TK {(summary?.subtotal ?? 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm font-semibold">
+                    <span className="text-muted">Delivery</span>
+                    <span>TK {(summary?.deliveryCharge ?? 0).toFixed(2)}</span>
+                  </div>
+                  
+                  {appliedCoupon && (
+                    <div className="flex items-center justify-between text-sm font-bold text-green-600">
+                      <span>Discount</span>
+                      <span>- TK {appliedCoupon.discount.toFixed(2)}</span>
+                    </div>
+                  )}
+
+                  <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
+                    <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Total</span>
+                    <span className="text-2xl font-extrabold text-primary">TK {finalTotal.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleCheckout}
+                  disabled={isCheckingOut || isEmpty}
+                  className="mt-8 w-full bg-primary text-white py-4 rounded-xl neomorph-raised hover:neomorph-inset active:neomorph-inset transition-all font-extrabold text-lg flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isCheckingOut ? "Connecting..." : "Checkout Now"}
+                </button>
+              </div>
             </div>
           </div>
         )}

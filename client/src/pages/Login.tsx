@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { GoogleLogin } from "@react-oauth/google";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -33,6 +34,33 @@ export default function Login() {
       }
 
       // Store token (in a real app, use better state management or HttpOnly cookies if possible)
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("user", JSON.stringify(data.user));
+
+      if (data.user.roles.includes("admin")) {
+        navigate("/admin");
+      } else {
+        navigate("/dashboard");
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSuccess = async (credentialResponse: any) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken: credentialResponse.credential }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Google login failed");
+
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
 
@@ -111,6 +139,22 @@ export default function Login() {
             {loading ? "Signing In..." : "Sign In"}
           </button>
         </form>
+
+        <div className="mt-8 flex flex-col items-center justify-center space-y-4">
+          <div className="flex items-center w-full gap-4">
+            <hr className="flex-1 border-slate-300" />
+            <span className="text-xs text-muted font-bold uppercase tracking-widest">OR</span>
+            <hr className="flex-1 border-slate-300" />
+          </div>
+          
+          <div className="w-full flex justify-center mt-4">
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={() => setError("Google Login Failed")}
+              useOneTap
+            />
+          </div>
+        </div>
 
         <p className="mt-8 text-center text-sm font-medium text-muted">
           Don't have an account? <Link to="/signup" className="text-primary hover:underline font-bold">Sign up</Link>

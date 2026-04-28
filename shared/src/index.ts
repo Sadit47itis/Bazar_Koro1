@@ -19,6 +19,7 @@ export interface UserPublic {
   email: string;
   roles: UserRole[];
   neighborhood?: string;
+  adPoints?: number;
 }
 
 export interface CartLine {

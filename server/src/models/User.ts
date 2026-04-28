@@ -12,7 +12,13 @@ export interface IUser {
   roles: UserRole[];
   neighborhood?: string;
   isOnline?: boolean;
+  currentLocation?: {
+    type: 'Point';
+    coordinates: [number, number]; // [lng, lat]
+  };
+  lastLocationUpdate?: Date;
   driverDailyGoal?: number;
+  adPoints?: number;
 }
 
 const userSchema = new mongoose.Schema<IUser>(
@@ -28,10 +34,26 @@ const userSchema = new mongoose.Schema<IUser>(
     },
     neighborhood: { type: String },
     isOnline: { type: Boolean, default: false },
+    currentLocation: {
+      type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point'
+      },
+      coordinates: {
+        type: [Number], // [lng, lat]
+        default: [0, 0]
+      }
+    },
+    lastLocationUpdate: { type: Date, default: null },
     driverDailyGoal: { type: Number, default: 0 },
+    adPoints: { type: Number, default: 500 },
   },
   { timestamps: true }
 );
+
+// Create geospatial index for nearby orders
+userSchema.index({ 'currentLocation': '2dsphere' });
 
 // Map the _id to id to match the legacy 'nanoid' structure for the frontend automatically.
 userSchema.set('toJSON', {

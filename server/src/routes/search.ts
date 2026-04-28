@@ -49,10 +49,31 @@ export const searchRoute = async (req: Request, res: Response) => {
       pipeline.push({ $match: matchStage });
     }
 
+    // ✅ 2.5. ADD PROMOTION STATUS FIELD
+    const now = new Date();
+    pipeline.push({
+      $addFields: {
+        isCurrentlyPromoted: {
+          $and: [
+            { $eq: ['$isPromoted', true] },
+            { $gt: ['$promotedUntil', now] }
+          ]
+        }
+      }
+    });
+
     // 3. Calculate Total Documents (for Pagination) before applying skip/limit
     const countPipeline = [...pipeline, { $count: 'total' }];
     const countResult = await Product.aggregate(countPipeline);
     const total = countResult[0]?.total || 0;
+
+    // ✅ 3.5. SORT BY PROMOTION STATUS FIRST (promoted products to the top), then by creation date
+    pipeline.push({
+      $sort: {
+        isCurrentlyPromoted: -1,  // false=0, true=1, so -1 puts true first
+        createdAt: -1             // Most recent products next
+      }
+    });
 
     // 4. Apply Pagination ($skip and $limit)
     pipeline.push({ $skip: skip });

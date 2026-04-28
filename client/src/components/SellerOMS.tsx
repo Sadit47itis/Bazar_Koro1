@@ -119,8 +119,23 @@ export function SellerOMS({ storeId }: { storeId: string }) {
                     Reject
                   </button>
                 </>
-              )}
-              {order.status === 'accepted' && (
+              )}              {/* After payment is confirmed, allow seller to proceed to pickup */}
+              {(order.status === 'paid' || order.status === 'accepted') && (
+                <>
+                  <button 
+                    onClick={() => updateStatus(order._id, 'ready_for_pickup')} 
+                    className="flex-1 w-full py-2.5 rounded-xl bg-orange-500 text-white font-bold neomorph-raised active:neomorph-inset transition-all"
+                  >
+                    Mark Ready for Pickup
+                  </button>
+                  <button 
+                    onClick={() => updateStatus(order._id, 'rejected')} 
+                    className="flex-1 py-2.5 rounded-xl text-red-500 font-bold neomorph-raised active:neomorph-inset transition-all border border-red-500"
+                  >
+                    Reject
+                  </button>
+                </>
+              )}              {order.status === 'accepted' && (
                 <button 
                   onClick={() => updateStatus(order._id, 'ready_for_pickup')} 
                   className="w-full py-2.5 rounded-xl bg-green-500 text-white font-bold neomorph-raised active:neomorph-inset transition-all"

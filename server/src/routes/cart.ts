@@ -6,6 +6,13 @@ import { Cart } from '../models/Cart.js'
 import Product from '../models/Product.js'
 import { Store } from '../models/Store.js'
 
+import { calculateDistanceWithGoogle } from '../utils/googleMaps.js'
+import { User } from '../models/User.js'
+
+// Delivery fee constants (same as driver.ts)
+const DELIVERY_BASE_FEE = 40; // Base delivery fee in Taka
+const DELIVERY_PER_KM_FEE = 10; // Per km delivery fee in Taka
+
 const addToCartSchema = z.object({
   productId: z.string().min(1),
   qty: z.number().int().positive().optional().default(1),
@@ -32,26 +39,50 @@ function requireBuyer(req: AuthedRequest, res: Response): req is AuthedRequest &
   return true
 }
 
-function calculateDeliveryCharge(distance: number, weight: number): number {
-  let baseFee = 0;
-  if (distance <= 2) {
-    baseFee = 50;
-  } else if (distance <= 6) {
-    baseFee = 50 + (distance - 2) * 12;
-  } else {
-    baseFee = 98 + (distance - 6) * 15;
-  }
-  
-  return baseFee;
-}
-
-async function computeSummary(items: any[]) {
+export async function computeSummary(items: any[], buyerId?: string) {
   const subtotal = items.reduce((acc, item) => acc + item.unitPrice * item.qty, 0)
   
-  const productIds = items.map((i) => i.productId)
-  const products = await Product.find({ _id: { $in: productIds } })
-  
-  let totalDelivery = 0
+  // Delivery charge: base fee + distance-based fee calculated from buyer to store location
+  let deliveryCharge = 0;
+  let maxDistanceKm = 0;
+  if (items.length > 0) {
+    deliveryCharge = DELIVERY_BASE_FEE;
+    
+    if (buyerId) {
+      try {
+        const buyer = await User.findById(buyerId);
+        const buyerLat = buyer?.currentLocation?.coordinates?.[1];
+        const buyerLng = buyer?.currentLocation?.coordinates?.[0];
+        
+        if (buyerLat && buyerLng && (buyerLat !== 0 || buyerLng !== 0)) {
+          const storeIds = [...new Set(items.map(i => i.storeId))];
+          
+          for (const sId of storeIds) {
+            const store = await Store.findById(sId);
+            const storeLat = (store as any)?.location?.coordinates?.[1];
+            const storeLng = (store as any)?.location?.coordinates?.[0];
+            
+            if (storeLat && storeLng) {
+              const res = await calculateDistanceWithGoogle([buyerLat, buyerLng], [storeLat, storeLng]);
+              if (res && res.distanceKm > maxDistanceKm) {
+                maxDistanceKm = res.distanceKm;
+              }
+            }
+          }
+          
+          if (maxDistanceKm > 0) {
+            deliveryCharge += maxDistanceKm * DELIVERY_PER_KM_FEE;
+          }
+        }
+      } catch (error) {
+        console.error('Error calculating delivery distance:', error);
+      }
+    }
+  }
+
+  // Round to nearest integer
+  deliveryCharge = Math.round(deliveryCharge);
+  const total = subtotal + deliveryCharge
 
   const groupedByStore = new Map<string, { storeId: string; storeName?: string; items: any[]; subtotal: number }>()
   for (const item of items) {
@@ -70,35 +101,12 @@ async function computeSummary(items: any[]) {
     }
   }
 
-  let platformFee = 0;
-
-  if (items.length > 0) {
-    for (const group of groupedByStore.values()) {
-        let storeWeight = 0;
-        for (const item of group.items) {
-          const product = products.find(p => p.id === item.productId || p._id.toString() === item.productId);
-          const weight = product && (product as any).weight ? (product as any).weight : 1; 
-          storeWeight += weight * item.qty;
-        }
-        
-        // Mock distance for now (4.5 km) since buyer location is not strictly available in this schema
-        const distance = 4.5; 
-        totalDelivery += calculateDeliveryCharge(distance, storeWeight);
-    }
-    
-    // Platform fee
-    platformFee = 10;
-  }
-
-  let total = subtotal + totalDelivery + platformFee
-  total = Math.round(total / 5) * 5
-
   return {
     items,
     grouped: [...groupedByStore.values()],
     subtotal,
-    deliveryCharge: totalDelivery,
-    platformFee,
+    deliveryCharge,
+    deliveryDistanceKm: parseFloat(maxDistanceKm.toFixed(1)),
     total,
   }
 }
@@ -161,7 +169,8 @@ export async function addToCartRoute(req: AuthedRequest, res: Response) {
   }
 
   await cart.save()
-  return res.status(201).json(await computeSummary(cart.items))
+  const summary = await computeSummary(cart.items, req.user.id)
+  return res.status(201).json(summary)
 }
 
 export async function updateCartItemQtyRoute(req: AuthedRequest, res: Response) {
@@ -173,7 +182,7 @@ export async function updateCartItemQtyRoute(req: AuthedRequest, res: Response) 
   const { productId, qty } = parsed.data
 
   const cart = await Cart.findOne({ buyerId: req.user.id })
-  if (!cart) return res.json(await computeSummary([]))
+  if (!cart) return res.json(await computeSummary([], req.user.id))
 
   const index = cart.items.findIndex((i) => i.productId === productId)
   if (index < 0) return res.status(404).json({ error: 'Cart item not found' })
@@ -209,7 +218,8 @@ export async function updateCartItemQtyRoute(req: AuthedRequest, res: Response) 
   }
 
   await cart.save()
-  return res.json(await computeSummary(cart.items))
+  const summary = await computeSummary(cart.items, req.user.id)
+  return res.json(summary)
 }
 
 export async function removeCartItemRoute(req: AuthedRequest, res: Response) {
@@ -219,7 +229,7 @@ export async function removeCartItemRoute(req: AuthedRequest, res: Response) {
   if (!parsed.success) return res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() })
 
   const cart = await Cart.findOne({ buyerId: req.user.id })
-  if (!cart) return res.json(await computeSummary([]))
+  if (!cart) return res.json(await computeSummary([], req.user.id))
 
   const itemToRemove = cart.items.find((i) => i.productId === parsed.data.productId)
   
@@ -233,12 +243,14 @@ export async function removeCartItemRoute(req: AuthedRequest, res: Response) {
 
   cart.items = cart.items.filter((i) => i.productId !== parsed.data.productId)
   await cart.save()
-  return res.json(await computeSummary(cart.items))
+  const summary = await computeSummary(cart.items, req.user.id)
+  return res.json(summary)
 }
 
 export async function getCartSummaryRoute(req: AuthedRequest, res: Response) {
   if (!requireBuyer(req, res)) return
 
   const cart = await Cart.findOne({ buyerId: req.user.id })
-  return res.json(await computeSummary(cart?.items ?? []))
+  const summary = await computeSummary(cart?.items ?? [], req.user.id)
+  return res.json(summary)
 }

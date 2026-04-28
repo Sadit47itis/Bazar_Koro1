@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import mongoose from 'mongoose'
 import { createApp } from './app.js'
 import { env } from './env.js'

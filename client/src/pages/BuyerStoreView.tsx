@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ShoppingCart, Store } from "lucide-react";
+import { ArrowLeft, ShoppingCart, Store, Star } from "lucide-react";
 
 interface Product {
   id: string;
@@ -22,10 +22,32 @@ export default function BuyerStoreView() {
 
   const [store, setStore] = useState<any>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [avgRating, setAvgRating] = useState<number>(0);
+  const [cartItemCount, setCartItemCount] = useState(0);
 
   useEffect(() => {
     fetchStoreAndProducts();
+    fetchCartSummary();
   }, [storeId]);
+
+  const fetchCartSummary = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      const res = await fetch(`/api/cart/summary`, {
+        headers: { "Authorization": `Bearer ${token}`, "x-active-role": "buyer" }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.items) {
+           setCartItemCount(data.items.reduce((acc: number, item: any) => acc + item.qty, 0));
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const addToCart = async (productId: string) => {
     const token = localStorage.getItem("token");
@@ -47,6 +69,11 @@ export default function BuyerStoreView() {
       });
 
       if (!res.ok) throw new Error("Failed to add to cart");
+      
+      const data = await res.json();
+      if (data.items) {
+        setCartItemCount(data.items.reduce((acc: number, item: any) => acc + item.qty, 0));
+      }
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -72,6 +99,8 @@ export default function BuyerStoreView() {
         id: p._id || p.id,
       }));
       setProducts(formattedProducts);
+      setReviews(data.reviews || []);
+      setAvgRating(data.avgRating || 0);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -100,24 +129,35 @@ export default function BuyerStoreView() {
                    </span>
                 </h1>
                 <p className="text-muted font-medium text-sm mt-1 flex items-center gap-1">
-                   <Store className="w-4 h-4 text-slate-400" />
-                   {store.location?.road}, {store.location?.city}
+                   <Store className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                   <span>{store.location?.road}, {store.location?.city}</span>
+                   {reviews.length > 0 && (
+                        <span className="flex items-center gap-1 ml-3 text-orange-500 font-bold bg-orange-500/10 px-2 py-0.5 rounded-lg text-xs tracking-wide">
+                           <Star className="w-3 h-3 fill-current mb-0.5" />
+                         {avgRating.toFixed(1)} ({reviews.length})
+                      </span>
+                   )}
                 </p>
              </div>
           </div>
-          <div className="flex items-center gap-4">
-             <button
-                onClick={() => navigate("/buyer/cart")}
-                className="px-4 py-2 rounded-xl neomorph-raised active:neomorph-inset transition-all font-semibold flex items-center gap-2 text-primary"
-             >
-                <ShoppingCart className="w-4 h-4" />
-                <span>Cart</span>
-             </button>
-             <div className="text-right hidden sm:block">
-                 <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Store Owner</p>
-                 <p className="font-semibold text-lg">{store.ownerName}</p>
-             </div>
-          </div>
+               <div className="flex items-center gap-4">
+                  <button
+                     onClick={() => navigate("/buyer/cart")}
+                     className="relative px-4 py-2 rounded-xl neomorph-raised active:neomorph-inset transition-all font-semibold flex items-center gap-2 text-primary"
+                  >
+                     <ShoppingCart className="w-4 h-4" />
+                     <span>Cart</span>
+                     {cartItemCount > 0 && (
+                        <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
+                           {cartItemCount}
+                        </span>
+                     )}
+                  </button>
+                  <div className="text-right hidden sm:block">
+                      <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Store Owner</p>
+                      <p className="font-semibold text-lg">{store.ownerName}</p>
+                  </div>
+               </div>
         </div>
 
         {/* Products Grid */}
@@ -206,6 +246,28 @@ export default function BuyerStoreView() {
                  </div>
                  )
               })}
+           </div>
+        )}
+
+        {/* Reviews Section */}
+        {reviews.length > 0 && (
+           <div className="mt-12 pt-8 border-t border-slate-300">
+              <h2 className="text-2xl font-bold mb-6 tracking-tight">Customer Reviews</h2>
+              <div className="space-y-4">
+                 {reviews.map((r: any) => (
+                    <div key={r._id} className="p-4 rounded-2xl bg-surface neomorph-inset">
+                       <div className="flex items-center justify-between mb-2">
+                          <span className="font-bold text-primary">{r.buyerId?.name || "Anonymous"}</span>
+                          <div className="flex gap-1">
+                             {Array.from({ length: 5 }).map((_, i) => (
+                                <Star key={i} className={`w-4 h-4 ${i < r.rating ? 'fill-orange-500 text-orange-500' : 'text-slate-300'}`} />
+                             ))}
+                          </div>
+                       </div>
+                       <p className="text-muted text-sm italic">"{r.comment}"</p>
+                    </div>
+                 ))}
+              </div>
            </div>
         )}
       </div>
