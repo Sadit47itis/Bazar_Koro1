@@ -8,7 +8,7 @@ I wrote this document so the whole team can quickly understand **what each folde
 > - `shared/` = TypeScript types shared by both
 
 ---
-
+## Deployed Website - [www.bazarkoro1.com](https://bazarkoro1.com/)
 ## 1) Quick start (Windows)
 
 ### First-time setup
